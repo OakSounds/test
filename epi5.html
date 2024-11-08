@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Epicycloid Animation with MIDI Sound (Tone.js)</title>
+  <style>
+    canvas {
+      border: 1px solid black;
+    }
+    .controls {
+      margin-top: 10px;
+    }
+    .controls label {
+      margin-right: 15px;
+    }
+    .controls select, .controls input[type="number"], .controls input[type="range"] {
+      margin-right: 10px;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="canvas" width="600" height="600"></canvas>
+  <div class="controls">
+    <button id="startStopBtn">Start</button>
+    <label>Speed:
+      <input type="range" id="speedSlider" min="0.01" max="0.1" step="0.005" value="0.02">
+    </label>
+    <label>k (R/r):
+      <input type="number" id="kInput" min="1" max="10" step="0.1" value="4">
+    </label>
+    <label>Subsectors per Sector:
+      <input type="number" id="subsectorInput" min="1" max="12" step="1" value="5">
+    </label>
+    <label>Rotation Angle (0°-45°):
+      <input type="range" id="rotationSlider" min="0" max="45" step="1" value="0">
+    </label>
+    <label>Scale:
+      <select id="scaleSelect">
+        <option value="major">Major Scale</option>
+        <option value="melodicMinor">Melodic Minor Scale</option>
+        <option value="harmonicMinor">Harmonic Minor Scale</option>
+      </select>
+    </label>
+    <label>Octave Behavior:
+      <select id="octaveSelect">
+        <option value="ascending">Ascending</option>
+        <option value="descending">Descending</option>
+        <option value="constant">Constant</option>
+      </select>
+    </label>
+  </div>
+
+  <!-- Include Tone.js Library -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.26/Tone.min.js"></script>
+
+  <script>
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+
+    // Control elements
+    const startStopBtn = document.getElementById('startStopBtn');
+    const speedSlider = document.getElementById('speedSlider');
+    const kInput = document.getElementById('kInput');
+    const subsectorInput = document.getElementById('subsectorInput');
+    const rotationSlider = document.getElementById('rotationSlider');
+    const scaleSelect = document.getElementById('scaleSelect');
+    const octaveSelect = document.getElementById('octaveSelect');
+
+    const width = canvas.width;
+    const height = canvas.height;
+
+    let isRunning = false;
+    let theta = 0;
+    let speed = parseFloat(speedSlider.value);
+    let k = parseFloat(kInput.value);
+    let numSubsectors = parseInt(subsectorInput.value);
+    let rotationAngle = parseInt(rotationSlider.value); // Rotation angle in degrees
+    let selectedScale = scaleSelect.value;
+    let octaveBehavior = octaveSelect.value;
+
+    let r = 50; // Base radius of the rolling circle
+    let R = k * r; // Base radius of the fixed circle
+
+    const centerX = width / 2;
+    const centerY = height / 2;
+
+    let path = [];
+
+    // Scaling factor variables
+    let scale = 1;
+    const margin = 20; // Margin from the canvas edge
+
+    // Tone.js Setup
+    let synth;
+    let isSynthReady = false;
+
+    // Initialize Tone.js Synth
+    async function initSynth() {
+      await Tone.start(); // Required to start the audio context
+
+      synth = new Tone.PolySynth(Tone.Sampler, {
+        urls: {
+          "C4": "C4.mp3",
+          "C#4": "Cs4.mp3",
+          "D4": "D4.mp3",
+          "D#4": "Ds4.mp3",
+          "E4": "E4.mp3",
+          "F4": "F4.mp3",
+          "F#4": "Fs4.mp3",
+          "G4": "G4.mp3",
+          "G#4": "Gs4.mp3",
+          "A4": "A4.mp3",
+          "A#4": "As4.mp3",
+          "B4": "B4.mp3"
+        },
+        baseUrl: "https://example.com/piano_samples/", // Replace with the URL where your samples are hosted
+        release: 1
+      }).toDestination();
+
+      isSynthReady = true;
+    }
+
+    initSynth();
+
+    let currentNote = null;
+
+    // Scales (note names)
+    const scales = {
+      major: ['C', 'D', 'E', 'F', 'G', 'A', 'B'], // C Major Scale
+      melodicMinor: ['C', 'D', 'D#', 'F', 'G', 'A', 'B'], // C Melodic Minor
+      harmonicMinor: ['C', 'D', 'D#', 'F', 'G', 'G#', 'B'], // C Harmonic Minor
+    };
+
+    let baseNotes = scales[selectedScale]; // Default scale
+
+    // Colors for subsectors (repeating colors)
+    const sectorColors = ['#FFCCCC', '#CCFFCC', '#CCCCFF', '#FFFFCC', '#CCFFFF', '#FFCCFF', '#CCE5FF'];
+
+    function calculateScale() {
+      // Maximum radius from the center to the outermost point of the epicycloid
+      const maxRadius = r * (k + 2);
+      scale = (width / 2 - margin) / maxRadius;
+
+      // Apply scaling to r and R
+      rScaled = r * scale;
+      RScaled = R * scale;
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, width, height);
+
+      // Draw sectors with colors
+      drawSectors();
+
+      // Draw fixed circle outline
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, RScaled, 0, 2 * Math.PI);
+      ctx.strokeStyle = 'black';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      // Calculate current point position (rolling the other way)
+      const x = centerX + rScaled * (k + 1) * Math.cos(theta) + rScaled * Math.cos((k + 1) * theta);
+      const y = centerY + rScaled * (k + 1) * Math.sin(theta) + rScaled * Math.sin((k + 1) * theta);
+
+      path.push({ x, y });
+
+      // Draw rolling circle
+      const rollingCenterX = centerX + (RScaled + rScaled) * Math.cos(theta);
+      const rollingCenterY = centerY + (RScaled + rScaled) * Math.sin(theta);
+      ctx.beginPath();
+      ctx.arc(rollingCenterX, rollingCenterY, rScaled, 0, 2 * Math.PI);
+      ctx.strokeStyle = 'blue';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+
+      // Draw tracing point on the rolling circle
+      ctx.beginPath();
+      ctx.arc(x, y, 5, 0, 2 * Math.PI);
+      ctx.fillStyle = 'red';
+      ctx.fill();
+
+      // Draw the path traced by the point
+      ctx.beginPath();
+      ctx.moveTo(path[0].x, path[0].y);
+      for (let i = 1; i < path.length; i++) {
+        ctx.lineTo(path[i].x, path[i].y);
+      }
+      ctx.strokeStyle = 'green';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+
+      // Calculate angle and determine sector and subsector
+      let angleRad = Math.atan2(y - centerY, x - centerX);
+      let angleDeg = angleRad * (180 / Math.PI);
+      if (angleDeg < 0) angleDeg += 360;
+
+      // Rotate the angle by the user-defined rotation angle
+      angleDeg = (angleDeg + rotationAngle) % 360;
+
+      let sector = Math.floor(angleDeg / 90); // 0 to 3
+      let subsectorAngleSize = 90 / numSubsectors;
+      let subsector = Math.floor((angleDeg % 90) / subsectorAngleSize); // 0 to numSubsectors - 1
+
+      // Play sound if the point is near the fixed circle
+      const distanceFromCenter = Math.hypot(x - centerX, y - centerY);
+      if (Math.abs(distanceFromCenter - RScaled) < 5) {
+        playSound(sector, subsector);
+      } else {
+        stopSound();
+      }
+
+      theta += speed;
+
+      if (isRunning) {
+        requestAnimationFrame(draw);
+      }
+    }
+
+    function drawSectors() {
+      let subsectorAngleSize = 90 / numSubsectors;
+      // Rotate the sectors by the user-defined rotation angle
+      let rotationOffset = rotationAngle * (Math.PI / 180);
+
+      for (let sector = 0; sector < 4; sector++) {
+        for (let subsector = 0; subsector < numSubsectors; subsector++) {
+          let startAngle = ((sector * 90) + (subsector * subsectorAngleSize)) * (Math.PI / 180);
+          let endAngle = startAngle + (subsectorAngleSize * Math.PI / 180);
+          startAngle += rotationOffset;
+          endAngle += rotationOffset;
+
+          let colorIndex = subsector % sectorColors.length;
+          ctx.beginPath();
+          ctx.moveTo(centerX, centerY);
+          ctx.arc(centerX, centerY, RScaled, startAngle, endAngle);
+          ctx.closePath();
+          ctx.fillStyle = sectorColors[colorIndex];
+          ctx.fill();
+        }
+      }
+    }
+
+    function getNoteForSubsector(sector, subsector) {
+      // Total notes per sector (octave)
+      let notesPerSector = baseNotes.length;
+
+      // Calculate the index of the note within the base notes
+      let noteIndex = Math.floor((subsector / numSubsectors) * notesPerSector);
+
+      // Ensure the index is within bounds
+      noteIndex = Math.min(noteIndex, notesPerSector - 1);
+
+      // Get the base note
+      let note = baseNotes[noteIndex];
+
+      return note;
+    }
+
+    function playSound(sector, subsector) {
+      if (!isSynthReady) return;
+
+      let note = getNoteForSubsector(sector, subsector);
+
+      // Adjust octave based on selected behavior
+      let octave;
+      switch (octaveBehavior) {
+        case 'ascending':
+          octave = 4 + sector; // Increase octave per sector
+          break;
+        case 'descending':
+          octave = 4 - sector; // Decrease octave per sector
+          break;
+        case 'constant':
+        default:
+          octave = 4; // Constant octave
+          break;
+      }
+
+      // Construct full note (e.g., "C4")
+      let fullNote = note + octave;
+
+      // Avoid replaying the same note
+      if (currentNote !== fullNote) {
+        stopSound();
+        synth.triggerAttack(fullNote);
+        currentNote = fullNote;
+      }
+    }
+
+    function stopSound() {
+      if (currentNote) {
+        synth.triggerRelease(currentNote);
+        currentNote = null;
+      }
+    }
+
+    function resetDrawing() {
+      theta = 0;
+      path = [];
+      calculateScale();
+    }
+
+    // Initial scale calculation
+    let rScaled = r;
+    let RScaled = R;
+    calculateScale();
+
+    // Event listeners for controls
+    startStopBtn.addEventListener('click', () => {
+      isRunning = !isRunning;
+      startStopBtn.textContent = isRunning ? 'Stop' : 'Start';
+      if (isRunning) {
+        draw();
+      } else {
+        stopSound();
+      }
+    });
+
+    speedSlider.addEventListener('input', () => {
+      speed = parseFloat(speedSlider.value);
+    });
+
+    kInput.addEventListener('change', () => {
+      k = parseFloat(kInput.value);
+      R = k * r;
+      resetDrawing();
+    });
+
+    subsectorInput.addEventListener('change', () => {
+      numSubsectors = parseInt(subsectorInput.value);
+      resetDrawing();
+    });
+
+    rotationSlider.addEventListener('input', () => {
+      rotationAngle = parseInt(rotationSlider.value);
+      resetDrawing();
+    });
+
+    scaleSelect.addEventListener('change', () => {
+      selectedScale = scaleSelect.value;
+      baseNotes = scales[selectedScale];
+    });
+
+    octaveSelect.addEventListener('change', () => {
+      octaveBehavior = octaveSelect.value;
+    });
+
+  </script>
+</body>
+</html>
